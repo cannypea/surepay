@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
 from app.models.user import User
-from app.schemas.user import UserCreate
-from app.services.auth import hash_password
+from app.services.auth_service import hash_password, verify_password, create_token
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
 
 def get_db():
     db = SessionLocal()
@@ -14,14 +15,47 @@ def get_db():
     finally:
         db.close()
 
+
+# =========================
+# REGISTER
+# =========================
 @router.post("/register")
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    new_user = User(
-        email=user.email,
-        password=hash_password(user.password),
-        role=user.role
+def register(email: str, password: str, role: str = "USER", db: Session = Depends(get_db)):
+
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    user = User(
+        email=email,
+        password=hash_password(password),
+        role=role
     )
-    db.add(new_user)
+
+    db.add(user)
     db.commit()
-    db.refresh(new_user)
-    return {"message": "User created"}
+    db.refresh(user)
+
+    return {"message": "User created", "user_id": user.id}
+
+
+# =========================
+# LOGIN
+# =========================
+@router.post("/login")
+def login(email: str, password: str, db: Session = Depends(get_db)):
+
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user or not verify_password(password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_token({
+        "user_id": user.id,
+        "role": user.role
+    })
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
